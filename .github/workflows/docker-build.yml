@@ -1,5 +1,9 @@
 name: CI — Build Docker image
 
+permissions:
+  contents: write
+  packages: write
+
 on:
   push:
     branches: [ "master", "main" ]
@@ -16,11 +20,68 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
-      - name: Build Docker image
+      - name: Create Git tag
+        id: create_tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # create a deterministic tag based on run number and short sha
+          SHORT_SHA=${GITHUB_SHA:0:7}
+          TAG="v${GITHUB_RUN_NUMBER}-${SHORT_SHA}"
+          echo "Created tag: $TAG"
+          # export tag as step output for later steps and jobs
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
+          git tag -a "$TAG" -m "CI tag $TAG"
+          git push origin "$TAG"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push Docker image to GHCR and Docker Hub
         uses: docker/build-push-action@v5
         with:
           context: .
-          push: false
-          tags: mysql-backup-s3:ci-${{ github.sha }}
+          push: true
+          tags: |
+            ghcr.io/arca1n/mysql-backup-s3:latest
+            ghcr.io/arca1n/mysql-backup-s3:${{ github.sha }}
+            ghcr.io/arca1n/mysql-backup-s3:${{ steps.create_tag.outputs.tag }}
+            docker.io/arca1n/mysql-backup-s3:latest
+            docker.io/arca1n/mysql-backup-s3:${{ github.sha }}
+            docker.io/arca1n/mysql-backup-s3:${{ steps.create_tag.outputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  smoke-test:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull the pushed image
+        run: |
+          docker pull ghcr.io/arca1n/mysql-backup-s3:latest
+
+      - name: Smoke test - ensure /run.sh exists and is executable
+        run: |
+          docker run --rm ghcr.io/arca1n/mysql-backup-s3:latest sh -c '\
+            if [ -x /run.sh ]; then echo "/run.sh is present and executable"; else echo "/run.sh missing or not executable"; exit 1; fi\'
