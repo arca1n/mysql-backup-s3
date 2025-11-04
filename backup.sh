@@ -59,13 +59,38 @@ copy_s3 () {
 
   echo "Uploading ${DEST_FILE} on S3..."
 
-  cat $SRC_FILE | aws $AWS_ARGS s3 cp - s3://$S3_BUCKET/$S3_PREFIX/$DEST_FILE
-
-  if [ $? != 0 ]; then
-    >&2 echo "Error uploading ${DEST_FILE} on S3"
+  # Create a temporary rclone config using provided credentials (or env auth when using IAM role)
+  RCLONE_CONF=/tmp/rclone.conf
+  echo "[s3]" > $RCLONE_CONF
+  echo "type = s3" >> $RCLONE_CONF
+  # If using IAM role, let rclone use env auth
+  if [ "${S3_IAMROLE}" = "true" ]; then
+    echo "env_auth = true" >> $RCLONE_CONF
+  else
+    echo "access_key_id = ${S3_ACCESS_KEY_ID}" >> $RCLONE_CONF
+    echo "secret_access_key = ${S3_SECRET_ACCESS_KEY}" >> $RCLONE_CONF
+  fi
+  if [ "${S3_REGION}" != "" ]; then
+    echo "region = ${S3_REGION}" >> $RCLONE_CONF
+  fi
+  if [ "${S3_ENDPOINT}" != "**None**" ]; then
+    # For non-AWS endpoints, use provider = Other and set the endpoint
+    echo "provider = Other" >> $RCLONE_CONF
+    echo "endpoint = ${S3_ENDPOINT}" >> $RCLONE_CONF
+  else
+    # Default provider is AWS
+    echo "provider = AWS" >> $RCLONE_CONF
   fi
 
-  rm $SRC_FILE
+  # Use rclone rcat to stream the file to the remote path
+  # rclone will read from stdin and write to s3:<bucket>/<prefix>/<dest>
+  rclone rcat --config $RCLONE_CONF "s3:$S3_BUCKET/$S3_PREFIX/$DEST_FILE" < "$SRC_FILE"
+
+  if [ $? != 0 ]; then
+    >&2 echo "Error uploading ${DEST_FILE} on S3 via rclone"
+  fi
+
+  rm -f $SRC_FILE $RCLONE_CONF
 }
 
 # Multi databases: yes

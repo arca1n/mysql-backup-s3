@@ -16,12 +16,9 @@ ENV S3_PREFIX 'backup'
 ENV S3_FILENAME **None**
 ENV MULTI_DATABASES no
 
-# install mysqldump, pip, awscli
+# install mysqldump and rclone (used to upload backups to S3-compatible storage)
 RUN apt-get update && \
-	apt-get install -y mysql-client python3 python3-pip && \
-	pip3 install awscli --break-system-packages && \
-	apt-get autoremove -y && \
-	apt-get remove -y python3-pip && \
+	apt-get install -y mysql-client awscli=2.22.35 && \
 	apt-get clean && \
 	rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
